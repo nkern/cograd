@@ -1,5 +1,4 @@
 ## cograd : Conjugate Gradient Algorithms in Python
----
 
 ### About:
 
