@@ -8,9 +8,9 @@ for use when evaluation of the underlying function is very slow, computationally
 and complex (e.g. a numerical simulation). It also contains some novel implementations of
 the NLCG algorithm that help it work better under these conditions.
 
+**version 0.1**
 
 
-
-## Authors:
+### Authors:
 
 Nick Kern
