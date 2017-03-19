@@ -160,14 +160,14 @@ class FiniteDiff(object):
         ndim = len(diff_vec)
 
         # Calc Partials
-        f0 = f(theta)
+        self.f0 = f(theta)
         pos_vec, neg_vec = self.calc_partials(f, theta, diff_vec, second_order=False)
 
         # Construct Jacobian Matrix
         J = np.empty((1,ndim))
         for i in range(ndim):
             if grad_type == 'forward':
-                J[0,i] = self.first_forward(f0, pos_vec[i], diff_vec[i])
+                J[0,i] = self.first_forward(self.f0, pos_vec[i], diff_vec[i])
             elif grad_type == 'central':
                 J[0,i] = self.first_central(neg_vec[i], pos_vec[i], diff_vec[i])
 
@@ -428,9 +428,34 @@ class Conj_Grad(FiniteDiff):
         """
         Exposed routines for the Nonlinear Conjugate Gradient algorithm,
         designed for when the underlying minimizable function (f) is expensive
-        to evaluate and/or non-analytic (i.e. a complex computer simulation). 
+        to evaluate and non-analytic (e.g. a complex computer simulation). 
+
+        In order to use it with a computer simulation, one must construct 
+        their own function (f) that submits job, writes data to file, loads
+        it in and returns relevant data.
         """
         pass
+
+    def print_message(self, msg, type=1):
+        if type == 0:
+            print(msg)
+        if type == 1:
+            print('\n'+msg+'\n'+'-'*30)
+
+    def weave(self, a, b):
+        """
+        weave two ndarrays 'a' and 'b' together
+        """
+        ashape = a.shape
+        bshape = b.shape
+        if len(ashape) == 1:
+            cshape = (ashape[0] + bshape[0],)
+        else:
+            cshape = (ashape[0]+bshape[0], ashape[1])
+        c = np.empty(cshape,dtype=a.dtype)
+        c[0::2] = a
+        c[1::2] = b
+        return c
 
     def initialize(self, base_dir):
         """
@@ -445,7 +470,7 @@ class Conj_Grad(FiniteDiff):
 
     def norm_gradient(self, f, x0, dx=0.01, grad_type='forward'):
         """
-        Unit vector of gradient
+        Negative unit vector of gradient
 
         df/dx = (f(x) + f(x+dx))/dx
         return (df/dx) / norm(df/dx)
@@ -467,7 +492,7 @@ class Conj_Grad(FiniteDiff):
         Output:
         -------
         grad    : ndarray
-                gradient unit vector
+                Negative gradient unit vector
         """
         length = len(x0)
         if type(dx) != np.ndarray:
@@ -477,7 +502,9 @@ class Conj_Grad(FiniteDiff):
         grad /= la.norm(grad)
         return grad
         
-    def GP_line_search(self, f, x0, d, Nsample=50, distance_frac=0.5, backpace=0.0):
+    def GP_line_search(self, f, x0, y0, d, Nsample=50, Nmin=500, distance_frac=0.5,
+                            param_bounds=None, n_restart=10, dist=None, verbose=True,
+                            backpace=1):
         """
         Gaussian Process Line Search
 
@@ -488,15 +515,15 @@ class Conj_Grad(FiniteDiff):
 
         Output:
         -------
-
+        xmin
 
         Notes:
         ------
-        The idea behind this algorithm is to sample a few points along the search direction and
-        fit their response to a 1D GP, and then solve for its minimum via direct draws from the
-        GP mean function along the search direction. To ensure we have not undersampled f we lay
-        down another set of points in between the original set, fit another GP and compare the 
-        the scale length hyperparameter, ell, to the original GP ell. We repeat until ell_2 is roughly
+        The idea behind this algorithm is to sample a few points from (f) along the search direction (slow),
+        fit their response to a 1D GP (fast), and then solve for its minimum via direct draws from the
+        GP mean function along the search direction (fast). To ensure we have not undersampled (f) we lay
+        down another set of points in between the original set (slow), fit another GP and compare the 
+        the scale length hyperparameter, ell, to the original GP ell (fast). We repeat until ell_2 is roughly
         the same as ell_1. Another stop point could be to stop when the derived minima are
         roughly the same. Both require an interpretation of roughly. Another consistency check is
         to make sure the derived minimum value is not an edge sample, that is to say, we have sampled
@@ -504,8 +531,8 @@ class Conj_Grad(FiniteDiff):
 
         This algorithm is likely slower than the normal line search routine when (f) is fast and
         analytic, but the idea behind this algorithm is to absolutely minimize the number of times
-        we have to evaluate (f), and when we do, allows us to do so in batch runs. This could be
-        beneficial if evaluating (f) is a very slow.
+        we have to evaluate (f), and when we do, allow us to do so in batch runs. This could be
+        beneficial if evaluating (f) is a very slow and could benefit from a computing cluster.
 
         A few caveats:
             1. We need to decide how many samples (Nsample) and how far across we should sample
@@ -514,27 +541,146 @@ class Conj_Grad(FiniteDiff):
             intersecting boundary edge.
 
         """
-        # Define GP
-        GP = gp.GaussianProcessRegressor(gp.kernels.RBF(length_scale=1.0)+gp.kernels.WhiteKernel(1e-4),n_restarts_optimizer=5)
+        if verbose == True:
+            self.print_message('starting GP line search')
 
-        # Lay Down points
-        xS = x0 + np.array(map(lambda x: d*x, np.linspace(0.1,bound,Nsample)))
+        # Define GP
+        GP = gp.GaussianProcessRegressor(gp.kernels.RBF(length_scale=1.0)+gp.kernels.WhiteKernel(1e-5),
+                                            n_restarts_optimizer=n_restart)
+
+        # Make dist equal to hard parameter bounds if not given
+        if dist is None:
+            if param_bounds is None:
+                dist = 3.0
+            else:
+                # Distance to bound across each feature
+                param_edge = np.array(map(lambda x: x[0][1 if x[1] > 0 else 0], zip(param_bounds, d)))
+                delta = param_edge - x0
+                # Ratio on grad unit vector
+                R = delta / d
+                Rmin = np.where(R==R.min())[0][0]
+                if type(Rmin) == np.ndarray:
+                    Rmin = Rmin[0]
+                # Magnitude of vector to param_bound
+                dist = R[Rmin]
+
+
+        # Lay down search points
+        xNEW = np.linspace(0,dist*distance_frac,Nsample+1)
+        dx = xNEW[1] - xNEW[0]
+
+        # Adjust according to backpace
+        xNEW -= dx*backpace
+
+        # Delete starting point
+        xL = np.delete(xNEW, backpace, axis=0)
+        xS = np.array(map(lambda x: x0 + x*d, xL))
         
         # Evaluate function
-        y = f(xS.T)
-        norm = np.abs(y).max()
-        y /= norm
+        yS = f(xS.T)
         
-        # Train GP
-        GP.fit(xS, y)
-        
-        # Get Minimum
-        xpred = x0 + np.array(map(lambda x: d*x, np.linspace(0.1,bound,100)))
-        ypred = GP.predict(xpred)*norm
-        ymin_index = np.where(ypred==ypred.min())[0][0]
-        xmin = xpred[ymin_index]
-        
-        return xmin
+        # Concatenate Arrays
+        xS = np.insert(xS, backpace, x0, axis=0)
+        xL = np.insert(xL, backpace, xL, axis=0)
+        yS = np.insert(yS, backpace, y0, axis=0)
+
+        # Normalize yS
+        norm = np.abs(yS).max()
+        yS /= norm
+
+        if verbose == True:
+            self.print_message('finished '+str(iterations)+' line search')
+
+        j = 0
+        while True:
+            # Train GP1
+            GP.fit(xL[::2][:,np.newaxis], yS[::2])
+            
+            # Get Minimum1 by one factor refining
+            xpred = np.linspace(xL[0], xL[-1], Nmin)
+            ypred1 = GP.predict(xpred[:,np.newaxis])*norm
+            ymin_index1 = np.where(ypred1==ypred1.min())[0][0]
+            xpred_start = xpred[ymin_index1-10]
+            xpred_dist = xpred[ymin_index1+10]-xpred_start
+            xpred = xpred_start + np.linspace(0, xpred_dist, Nmin)
+            ypred1 = GP.predict(xpred[:,np.newaxis])*norm
+            ymin_index1 = np.where(ypred1==ypred1.min())[0][0]
+            dmin1 = xpred[ymin_index1]
+            xmin1 = x0 + dmin1*d
+            ell1 = np.exp(GP.kernel_.theta[0])
+            
+            # Train GP2
+            GP.fit(xL[:,np.newaxis], yS)
+            
+            # Get Minimum2
+            xpred = np.linspace(xL[0], xL[-1], Nmin)
+            ypred2 = GP.predict(xpred[:,np.newaxis])*norm
+            ymin_index2 = np.where(ypred2==ypred2.min())[0][0]
+            xpred_start = xpred[ymin_index2-10]
+            xpred_dist = xpred[ymin_index2+10]-xpred_start
+            xpred = xpred_start + np.linspace(0, xpred_dist, Nmin)
+            ypred2 = GP.predict(xpred[:,np.newaxis])*norm
+            ymin_index2 = np.where(ypred2==ypred2.min())[0][0]
+            dmin2 = xpred[ymin_index2]
+            xmin2 = x0 + dmin2*d
+            ell2 = np.exp(GP.kernel_.theta[0])
+
+            if verbose == True:
+                self.print_message('ell1 = %.2f, ell2 = %.2f'%(ell1,ell2),type=0)
+                self.print_message('xmin1 = %.2f, xmin2 = %.2f'%(dmin1,dmin2),type=0)
+
+            # Check Minimum is not edge point
+            if la.norm(xmin2-xL[-1])/(dist*distance_frac) < 0.01:
+                extend_points = True
+            else:
+                extend_points = False
+
+            # Finish if the two give similar answers
+            if (np.abs(ell2-ell1)/ell1 < 0.5 or np.abs(dmin2-dmin1)/(dist*distance_frac) < 0.1) and extend_points == False:
+                break
+
+            # If edge point extend points, else double down sampling density
+            if extend_points == True:
+                xL2 = xL[-1] + np.linspace(0,dist*distance_frac,Nsample+1)[1:]))
+                xS2 = np.array(map(lambda x: x0 + x*d, xL2))
+
+                # Evaluate function
+                yS2 = f(xS2.T)
+                yS2 /= norm
+
+                # Concatenate Arrays
+                xL = np.concatenate([xL, xL2])
+                xS = np.concatenate([xS, xS2])
+                yS = np.concatenate([yS, yS2])
+
+            else:
+                dxL = xL[1] - xL[0]
+                xL2 = 
+                xS2 = np.copy(xS[:-1]) + d*dxS/2.0
+
+                # Evaluate function
+                yS2 = f(xS2.T)
+                yS2 /= norm
+                
+                # Concatenate Arrays
+                xS = self.weave(xS, xS2)
+                yS = self.weave(yS, yS2)
+
+            yS *= norm
+            norm = np.abs(yS).max()
+            yS /= norm
+
+            xL = np.array(map(lambda x: la.norm(x-x0), xS))
+
+            j += 1
+            if verbose == True:
+                self.print_message('finished '+str(j+1)+' line searches')
+
+        if verbose == True:
+            self.print_message('finished GP line search with xmin = '+str(xmin2))
+
+        return xmin2
+
 
     def beta_PR(self, r_i, r_ii):
         """ 
@@ -560,29 +706,46 @@ class Conj_Grad(FiniteDiff):
         else:
             return beta_PR
         
-    def descent(self, f, x0, iterations=5, restart=1):
+    def GP_descent(self, f, x0, iterations=5, restart=1, grad_kwargs={}, GP_ls_kwargs={}, verbose=True):
         """
-        Perform NLCG descent
+        Perform NLCG descent with Gaussian Process line search
 
         Input:
         ------
+
+        f : function object
+
+
+        x0 : ndarray
+
+
+        iterations : int
+
+        restart : int
+
+        GP_Nsample : int
+            Number of samples to evaluate along GP line search.
+            If you can run K samples in series on your cluster,
+            it is recommended to make GP_Nsample = K, and ideally
+            is an even number. 
+
 
         Output:
         -------
 
         """
-        self.pos = []
-        d0 = self.norm_gradient(f, x0)
+        self.pos = [x0]
+        d0 = self.norm_gradient(f, x0, **grad_kwargs)
         r0 = d0
         for i in range(iterations):
-            self.pos.append(x0)
-            x0 = self.GP_line_search(f, x0, d0)
-            r1 = self.norm_gradient(f, x0)
+            x1 = self.GP_line_search(f, x0, self.f0, d0, **GP_ls_kwargs)
+            r1 = self.norm_gradient(f, x1, **grad_kwargs)
             beta = self.beta_PR(r0, r1)
             if i % restart == 0 and i != 0: beta = 0.0
             d0 = r1 + beta*d0
             r0 = r1
-        self.pos.append(x0)
+            self.pos.append(np.copy(x1))
+            x0 = x1
         self.pos = np.array(self.pos)
         return x0
 
