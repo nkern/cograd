@@ -5,8 +5,8 @@
 cograd contains exposed algorithms for Non-Linear Conjugate Gradient descent that makes
 it easy to have more control over the optimization process. It is specifically designed
 for use when evaluation of the underlying function is very slow, computationally expensive
-and complex (e.g. a numerical simulation). It also contains some novel implementations of
-the NLCG algorithm including Gaussian Processes that help it work better under these conditions.
+and complex (e.g. a numerical simulation). It also contains a novel implementation of
+the line search algorithm that utilizes Gaussian Processes to help it work better under these conditions.
 
 **version 0.1**
 
