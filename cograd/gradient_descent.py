@@ -535,8 +535,8 @@ class Conj_Grad(FiniteDiff):
         beneficial if evaluating (f) is a very slow and could benefit from a computing cluster.
 
         A few caveats:
-            1. We need to decide how many samples (Nsample) and how far across we should sample
-            the search direction. One way to do this is to identify hard parameter space boundaries
+            1. When doing a line search, we need to decide how many samples (Nsample) and how far along the 
+            line we should sample. One way to do this is to identify hard parameter space boundaries
             and sample all the way, or a fraction of the way, from the starting point to the
             intersecting boundary edge.
 
@@ -553,7 +553,7 @@ class Conj_Grad(FiniteDiff):
             if param_bounds is None:
                 dist = 3.0
             else:
-                # Distance to bound across each feature
+                # Distance to boundary across each parameter
                 param_edge = np.array(map(lambda x: x[0][1 if x[1] > 0 else 0], zip(param_bounds, d)))
                 delta = param_edge - x0
                 # Ratio on grad unit vector
@@ -563,7 +563,6 @@ class Conj_Grad(FiniteDiff):
                     Rmin = Rmin[0]
                 # Magnitude of vector to param_bound
                 dist = R[Rmin]
-
 
         # Lay down search points
         xNEW = np.linspace(0,dist*distance_frac,Nsample+1)
@@ -581,7 +580,7 @@ class Conj_Grad(FiniteDiff):
         
         # Concatenate Arrays
         xS = np.insert(xS, backpace, x0, axis=0)
-        xL = np.insert(xL, backpace, xL, axis=0)
+        xL = np.insert(xL, backpace, 0, axis=0)
         yS = np.insert(yS, backpace, y0, axis=0)
 
         # Normalize yS
@@ -639,7 +638,7 @@ class Conj_Grad(FiniteDiff):
             if (np.abs(ell2-ell1)/ell1 < 0.5 or np.abs(dmin2-dmin1)/(dist*distance_frac) < 0.1) and extend_points == False:
                 break
 
-            # If edge point extend points, else double down sampling density
+            # If edge point then extend points, else double down sampling density
             if extend_points == True:
                 xL2 = xL[-1] + np.linspace(0,dist*distance_frac,Nsample+1)[1:]))
                 xS2 = np.array(map(lambda x: x0 + x*d, xL2))
@@ -732,6 +731,8 @@ class Conj_Grad(FiniteDiff):
 
         Output:
         -------
+        x0 : ndarray
+            parameter vector of stopping point
 
         """
         self.pos = [x0]
