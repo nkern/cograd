@@ -587,20 +587,20 @@ class Conj_Grad(FiniteDiff):
         norm = np.abs(yS).max()
         yS /= norm
 
-        if verbose == True:
-            self.print_message('finished '+str(iterations)+' line search')
-
         j = 0
         while True:
-            # Train GP1
+            # Train GP1 with half of points
             GP.fit(xL[::2][:,np.newaxis], yS[::2])
             
-            # Get Minimum1 by one factor refining
+            ## Get Minimum1 by one-factor refining
+            # First iteration minima
             xpred = np.linspace(xL[0], xL[-1], Nmin)
             ypred1 = GP.predict(xpred[:,np.newaxis])*norm
             ymin_index1 = np.where(ypred1==ypred1.min())[0][0]
+            # new starting and ending points that are 20 elements long around minima
             xpred_start = xpred[ymin_index1-10]
             xpred_dist = xpred[ymin_index1+10]-xpred_start
+            # Get minima of refined grid
             xpred = xpred_start + np.linspace(0, xpred_dist, Nmin)
             ypred1 = GP.predict(xpred[:,np.newaxis])*norm
             ymin_index1 = np.where(ypred1==ypred1.min())[0][0]
@@ -608,10 +608,10 @@ class Conj_Grad(FiniteDiff):
             xmin1 = x0 + dmin1*d
             ell1 = np.exp(GP.kernel_.theta[0])
             
-            # Train GP2
+            # Train GP2 with all points
             GP.fit(xL[:,np.newaxis], yS)
             
-            # Get Minimum2
+            # Get Minimum2 by one-factor refining
             xpred = np.linspace(xL[0], xL[-1], Nmin)
             ypred2 = GP.predict(xpred[:,np.newaxis])*norm
             ymin_index2 = np.where(ypred2==ypred2.min())[0][0]
@@ -625,12 +625,14 @@ class Conj_Grad(FiniteDiff):
             ell2 = np.exp(GP.kernel_.theta[0])
 
             if verbose == True:
-                self.print_message('ell1 = %.2f, ell2 = %.2f'%(ell1,ell2),type=0)
-                self.print_message('xmin1 = %.2f, xmin2 = %.2f'%(dmin1,dmin2),type=0)
+                self.print_message('ell_GP1 = %.2f, ell_GP2 = %.2f'%(ell1,ell2),type=0)
+                self.print_message('xmin_GP1 = %.2f, xmin_GP2 = %.2f'%(dmin1,dmin2),type=0)
 
             # Check Minimum is not edge point
             if la.norm(xmin2-xL[-1])/(dist*distance_frac) < 0.01:
                 extend_points = True
+                if verbose == True:
+                    self.print_message('xmin_GP2 is an edge point...', type=0)
             else:
                 extend_points = False
 
@@ -640,7 +642,7 @@ class Conj_Grad(FiniteDiff):
 
             # If edge point then extend points, else double down sampling density
             if extend_points == True:
-                xL2 = xL[-1] + np.linspace(0,dist*distance_frac,Nsample+1)[1:]))
+                xL2 = xL[-1] + np.linspace(0,dist*distance_frac,Nsample+1)[1:]
                 xS2 = np.array(map(lambda x: x0 + x*d, xL2))
 
                 # Evaluate function
@@ -654,8 +656,8 @@ class Conj_Grad(FiniteDiff):
 
             else:
                 dxL = xL[1] - xL[0]
-                xL2 = 
-                xS2 = np.copy(xS[:-1]) + d*dxS/2.0
+                xL2 = (xL + dxL/2.0)[:-1]
+                xS2 = np.array(map(lambda x: x + x*d, xL2))
 
                 # Evaluate function
                 yS2 = f(xS2.T)
@@ -663,6 +665,7 @@ class Conj_Grad(FiniteDiff):
                 
                 # Concatenate Arrays
                 xS = self.weave(xS, xS2)
+                xL = self.weave(xL, xL2)
                 yS = self.weave(yS, yS2)
 
             yS *= norm
