@@ -575,7 +575,7 @@ class Conj_Grad(FiniteDiff):
         xS = np.array(map(lambda x: x0 + x*d, xL))
         
         # Evaluate function
-        yS = f(xS.T, f_args=f_args)
+        yS = f(xS.T, *f_args)
         
         # Concatenate Arrays
         xS = np.insert(xS, backpace, x0, axis=0)
@@ -645,7 +645,7 @@ class Conj_Grad(FiniteDiff):
                 xS2 = np.array(map(lambda x: x0 + x*d, xL2))
 
                 # Evaluate function
-                yS2 = f(xS2.T, f_args=f_args)
+                yS2 = f(xS2.T, *f_args)
                 yS2 /= norm
 
                 # Concatenate Arrays
@@ -659,7 +659,7 @@ class Conj_Grad(FiniteDiff):
                 xS2 = np.array(map(lambda x: x + x*d, xL2))
 
                 # Evaluate function
-                yS2 = f(xS2.T, f_args=f_args)
+                yS2 = f(xS2.T, *f_args)
                 yS2 /= norm
                 
                 # Concatenate Arrays
@@ -751,8 +751,6 @@ class Conj_Grad(FiniteDiff):
             x0 = x1
         self.pos = np.array(self.pos)
         return x0
-
-
 
 
 
