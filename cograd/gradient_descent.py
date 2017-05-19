@@ -128,7 +128,7 @@ class FiniteDiff(object):
         """
         return (f_pos - 2*f + f_neg)/(dx**2)
 
-    def calc_jacobian(self, f, theta, diff_vec, attach=True, grad_type='forward'):
+    def calc_jacobian(self, f, theta, diff_vec, attach=True, grad_type='forward', f_args=[]):
         """
         Calculate the approximate Jacobian Matrix
         theta = [x, y, z, ...]
@@ -160,8 +160,8 @@ class FiniteDiff(object):
         ndim = len(diff_vec)
 
         # Calc Partials
-        self.f0 = f(theta)
-        pos_vec, neg_vec = self.calc_partials(f, theta, diff_vec, second_order=False)
+        self.f0 = f(theta, *f_args)
+        pos_vec, neg_vec = self.calc_partials(f, theta, diff_vec, second_order=False, f_args=f_args)
 
         # Construct Jacobian Matrix
         J = np.empty((1,ndim))
@@ -241,7 +241,7 @@ class FiniteDiff(object):
             else:
                 return H
 
-    def calc_partials(self, f, theta, diff_vec, second_order=True):
+    def calc_partials(self, f, theta, diff_vec, second_order=True, f_args=[]):
         """
         Use finite difference to calculate pos_mat and neg_mat,
         which are matrices of the function, f, evaluated at f(x+dx)
@@ -282,8 +282,8 @@ class FiniteDiff(object):
                 if j != i:
                     theta_pos   += np.eye(ndim)[j] * diff_vec
                     theta_neg   -= np.eye(ndim)[j] * diff_vec
-                f_pos       = f(theta_pos)
-                f_neg       = f(theta_neg)
+                f_pos       = f(theta_pos, *f_args)
+                f_neg       = f(theta_neg, *f_args)
                 pos_mat[i,j] = 1 * f_pos
                 neg_mat[i,j] = 1 * f_neg
                 if i != j:
@@ -312,7 +312,7 @@ class FiniteDiff(object):
         prop = -gamma*J
         return prop
 
-    def find_root(self, f, theta, diff_vec, nsteps=10, gamma=0.1, second_order=False, bounds=None, step_size=None):
+    def find_root(self, f, theta, diff_vec, nsteps=10, gamma=0.1, second_order=False, bounds=None, step_size=None, f_args=[]):
         """
         Find root
 
@@ -363,12 +363,12 @@ class FiniteDiff(object):
                 steps.append(np.copy(theta))
 
                 # Approximate partial derivatives
-                pos_mat, neg_mat = self.calc_partials(f, theta, diff_vec, second_order=second_order)
+                pos_mat, neg_mat = self.calc_partials(f, theta, diff_vec, second_order=second_order, f_args=f_args)
                 if second_order == True:
-                    H, J = self.calc_hessian(f(theta), pos_mat, neg_mat, diff_vec)
+                    H, J = self.calc_hessian(f(theta, *f_args), pos_mat, neg_mat, diff_vec)
                     grads.append([self.H, self.J])
                 else:
-                    J = self.calc_jacobian(f(theta), pos_mat, diff_vec, neg_vec=neg_mat)
+                    J = self.calc_jacobian(f(theta, *f_args), pos_mat, diff_vec, neg_vec=neg_mat, f_args=f_args)
                     grads.append([self.J])
 
                 # Compute proposal step
@@ -410,16 +410,15 @@ class FiniteDiff(object):
 
         return np.array(steps), np.array(grads)
 
-    def hess(self, theta):
-        pos_mat, neg_mat = self.calc_partials(self.f, theta, self.diff_vec, second_order=True)
-        H, J = self.calc_hessian(self.f(theta), pos_mat, neg_mat, self.diff_vec)
+    def hess(self, theta, f_args=[]):
+        pos_mat, neg_mat = self.calc_partials(self.f, theta, self.diff_vec, second_order=True, f_args=f_args)
+        H, J = self.calc_hessian(self.f(theta, *f_args), pos_mat, neg_mat, self.diff_vec)
         return H
 
-    def jac(self, theta):
-        pos_vec, neg_vec = self.calc_partials(self.f, theta, self.diff_vec, second_order=False)
-        J = self.calc_jacobian(self.f, pos_vec, self.diff_vec, neg_vec=neg_vec)
+    def jac(self, theta, f_args=[]):
+        pos_vec, neg_vec = self.calc_partials(self.f, theta, self.diff_vec, second_order=False, f_args=f_args)
+        J = self.calc_jacobian(self.f, pos_vec, self.diff_vec, neg_vec=neg_vec, f_args=f_args)
         return J[0]
-
 
 
 class Conj_Grad(FiniteDiff):
@@ -468,7 +467,7 @@ class Conj_Grad(FiniteDiff):
         """
         pass
 
-    def norm_gradient(self, f, x0, dx=0.01, grad_type='forward'):
+    def norm_gradient(self, f, x0, dx=0.01, grad_type='forward', f_args=[]):
         """
         Negative unit vector of gradient
 
@@ -498,13 +497,13 @@ class Conj_Grad(FiniteDiff):
         if type(dx) != np.ndarray:
             dx = np.ones(length)*dx
 
-        grad = -self.calc_jacobian(f, x0, dx, grad_type=grad_type, attach=False)[0]
+        grad = -self.calc_jacobian(f, x0, dx, grad_type=grad_type, attach=False, f_args=f_args)[0]
         grad /= la.norm(grad)
         return grad
         
     def GP_line_search(self, f, x0, y0, d, Nsample=50, Nmin=500, distance_frac=0.5,
                             param_bounds=None, n_restart=10, dist=None, verbose=True,
-                            backpace=1):
+                            backpace=1, f_args=[]):
         """
         Gaussian Process Line Search
 
@@ -576,7 +575,7 @@ class Conj_Grad(FiniteDiff):
         xS = np.array(map(lambda x: x0 + x*d, xL))
         
         # Evaluate function
-        yS = f(xS.T)
+        yS = f(xS.T, f_args=f_args)
         
         # Concatenate Arrays
         xS = np.insert(xS, backpace, x0, axis=0)
@@ -646,7 +645,7 @@ class Conj_Grad(FiniteDiff):
                 xS2 = np.array(map(lambda x: x0 + x*d, xL2))
 
                 # Evaluate function
-                yS2 = f(xS2.T)
+                yS2 = f(xS2.T, f_args=f_args)
                 yS2 /= norm
 
                 # Concatenate Arrays
@@ -660,7 +659,7 @@ class Conj_Grad(FiniteDiff):
                 xS2 = np.array(map(lambda x: x + x*d, xL2))
 
                 # Evaluate function
-                yS2 = f(xS2.T)
+                yS2 = f(xS2.T, f_args=f_args)
                 yS2 /= norm
                 
                 # Concatenate Arrays
@@ -708,7 +707,7 @@ class Conj_Grad(FiniteDiff):
         else:
             return beta_PR
         
-    def GP_descent(self, f, x0, iterations=5, restart=1, grad_kwargs={}, GP_ls_kwargs={}, verbose=True):
+    def GP_descent(self, f, x0, iterations=5, restart=1, grad_kwargs={}, GP_ls_kwargs={}, f_args=[], verbose=True):
         """
         Perform NLCG descent with Gaussian Process line search
 
@@ -739,11 +738,11 @@ class Conj_Grad(FiniteDiff):
 
         """
         self.pos = [x0]
-        d0 = self.norm_gradient(f, x0, **grad_kwargs)
+        d0 = self.norm_gradient(f, x0, f_args=f_args, **grad_kwargs)
         r0 = d0
         for i in range(iterations):
-            x1 = self.GP_line_search(f, x0, self.f0, d0, **GP_ls_kwargs)
-            r1 = self.norm_gradient(f, x1, **grad_kwargs)
+            x1 = self.GP_line_search(f, x0, self.f0, d0, f_args=f_args, **GP_ls_kwargs)
+            r1 = self.norm_gradient(f, x1, f_args=f_args, **grad_kwargs)
             beta = self.beta_PR(r0, r1)
             if i % restart == 0 and i != 0: beta = 0.0
             d0 = r1 + beta*d0
@@ -752,16 +751,6 @@ class Conj_Grad(FiniteDiff):
             x0 = x1
         self.pos = np.array(self.pos)
         return x0
-
-
-
-
-
-
-
-
-
-
 
 
 
