@@ -316,7 +316,7 @@ class FiniteDiff(object):
 
         for i in range(ndim):
             if second_order == True: second = ndim
-            else second = i+1
+            else: second = i+1
             for j in range(i, second):
                 pos_mat[i,j] = 1 * f_pos
                 neg_mat[i,j] = 1 * f_neg
