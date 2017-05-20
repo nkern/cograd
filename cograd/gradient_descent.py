@@ -274,7 +274,7 @@ class FiniteDiff(object):
         else:
             M = pool.map
 
-        def f_eval(theta, f_args=f_args)
+        def f_eval(theta, f_args=f_args):
             return f(theta, *f_args)
 
         # Calculate positive and negative matrices
