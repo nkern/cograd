@@ -22,7 +22,7 @@ __all__ = ['FiniteDiff','Conj_Grad']
 class FiniteDiff(object):
 
     def __init__(self):
-        pass
+        self.f_counter = 0
 
     def first_central(self, f_neg, f_pos, dx):
         """
@@ -128,7 +128,7 @@ class FiniteDiff(object):
         """
         return (f_pos - 2*f + f_neg)/(dx**2)
 
-    def calc_jacobian(self, f, theta, diff_vec, attach=True, grad_type='forward', f_args=[]):
+    def calc_jacobian(self, f, theta, diff_vec, attach=True, grad_type='forward', f_args=[], pool=None):
         """
         Calculate the approximate Jacobian Matrix
         theta = [x, y, z, ...]
@@ -160,8 +160,7 @@ class FiniteDiff(object):
         ndim = len(diff_vec)
 
         # Calc Partials
-        self.f0 = f(theta, *f_args)
-        pos_vec, neg_vec = self.calc_partials(f, theta, diff_vec, second_order=False, f_args=f_args)
+        self.f0, pos_vec, neg_vec = self.calc_partials(f, theta, diff_vec, second_order=False, f_args=f_args, pool=pool, output_cent=True)
 
         # Construct Jacobian Matrix
         J = np.empty((1,ndim))
@@ -241,7 +240,7 @@ class FiniteDiff(object):
             else:
                 return H
 
-    def calc_partials(self, f, theta, diff_vec, second_order=True, f_args=[]):
+    def calc_partials(self, f, theta, diff_vec, second_order=True, f_args=[], pool=None, output_cent=False, grad_type='forward'):
         """
         Use finite difference to calculate pos_mat and neg_mat,
         which are matrices of the function, f, evaluated at f(x+dx)
@@ -270,20 +269,55 @@ class FiniteDiff(object):
         """
         ndim = len(diff_vec)
 
+        if pool is None:
+            M = map
+        else:
+            M = pool.map
+
+        def f_eval(theta, f_args=f_args)
+            return f(theta, *f_args)
+
         # Calculate positive and negative matrices
         pos_mat = np.empty((ndim,ndim))
         neg_mat = np.empty((ndim,ndim))
+        theta_pos = []
+        theta_neg = []
         for i in range(ndim):
             if second_order == True: second = ndim
             else: second = i+1
             for j in range(i,second):
-                theta_pos   = theta + np.eye(ndim)[i] * diff_vec
-                theta_neg   = theta - np.eye(ndim)[i] * diff_vec
+                th_pos   = theta + np.eye(ndim)[i] * diff_vec
+                th_neg   = theta - np.eye(ndim)[i] * diff_vec
                 if j != i:
-                    theta_pos   += np.eye(ndim)[j] * diff_vec
-                    theta_neg   -= np.eye(ndim)[j] * diff_vec
-                f_pos       = f(theta_pos, *f_args)
-                f_neg       = f(theta_neg, *f_args)
+                    th_pos   += np.eye(ndim)[j] * diff_vec
+                    th_neg   -= np.eye(ndim)[j] * diff_vec
+                theta_pos.append(th_pos)
+                theta_neg.append(th_neg)
+
+        if grad_type == 'forward':
+            if output_cent == True:
+                f_out = np.array(M(f_eval, theta_pos+[theta]))
+                f_pos = f_out[:-1]
+                f_cent = f_out[-1]
+                f_neg = np.zeros(f_pos.shape)
+            else:
+                f_pos = np.array(M(f_eval, theta_pos))
+                f_neg = np.zeros(f_pos.shape)
+
+        elif grad_type == 'central':
+            if output_cent == True:
+                f_out = np.array(M(f_eval, theta_pos+theta_neg+[theta]))
+                f_pos = f_out[:len(theta_pos)]
+                f_neg = f_out[len(theta_pos):-1]
+                f_cent = f_out[-1]
+            else:
+                f_out = M(f_eval, theta_pos+theta_neg)
+                f_pos, f_neg = f_out[:len(theta_pos)], f_out[len(theta_pos):]
+
+        for i in range(ndim):
+            if second_order == True: second = ndim
+            else second = i+1
+            for j in range(i, second):
                 pos_mat[i,j] = 1 * f_pos
                 neg_mat[i,j] = 1 * f_neg
                 if i != j:
@@ -291,9 +325,15 @@ class FiniteDiff(object):
                     neg_mat[j,i] = 1 * f_neg
 
         if second_order == True:
-            return pos_mat, neg_mat
+            if output_cent == True:
+                return f_cent, pos_mat, neg_mat
+            else:
+                return pos_mat, neg_mat
         else:
-            return pos_mat.diagonal(), neg_mat.diagonal()
+            if output_cent == True:
+                return f_cent, pos_mat.diagonal(), neg_mat.diagonal()
+            else:
+                return pos_mat.diagonal(), neg_mat.diagonal()
 
     def propose_O2(self, H,J,gamma=0.5):
         """
@@ -467,7 +507,7 @@ class Conj_Grad(FiniteDiff):
         """
         pass
 
-    def norm_gradient(self, f, x0, dx=0.01, grad_type='forward', f_args=[]):
+    def norm_gradient(self, f, x0, dx=0.01, grad_type='forward', f_args=[], pool=None):
         """
         Negative unit vector of gradient
 
@@ -497,13 +537,13 @@ class Conj_Grad(FiniteDiff):
         if type(dx) != np.ndarray:
             dx = np.ones(length)*dx
 
-        grad = -self.calc_jacobian(f, x0, dx, grad_type=grad_type, attach=False, f_args=f_args)[0]
+        grad = -self.calc_jacobian(f, x0, dx, grad_type=grad_type, attach=False, f_args=f_args, pool=pool)[0]
         grad /= la.norm(grad)
         return grad
         
     def GP_line_search(self, f, x0, y0, d, Nsample=50, Nmin=500, distance_frac=0.5,
                             param_bounds=None, n_restart=10, dist=None, verbose=True,
-                            backpace=1, f_args=[]):
+                            backpace=1, f_args=[], pool=None):
         """
         Gaussian Process Line Search
 
@@ -543,6 +583,15 @@ class Conj_Grad(FiniteDiff):
         if verbose == True:
             self.print_message('starting GP line search')
 
+        # Pooling
+        if pool is None:
+            M = map
+        else:
+            M = pool.map
+
+        def f_eval(theta, f_args=f_args):
+            return f(theta, *f_args)
+
         # Define GP
         GP = gp.GaussianProcessRegressor(gp.kernels.RBF(length_scale=1.0)+gp.kernels.WhiteKernel(1e-5),
                                             n_restarts_optimizer=n_restart)
@@ -575,7 +624,7 @@ class Conj_Grad(FiniteDiff):
         xS = np.array(map(lambda x: x0 + x*d, xL))
         
         # Evaluate function
-        yS = f(xS.T, *f_args)
+        yS = np.array(M(f_eval, xS.T))
         
         # Concatenate Arrays
         xS = np.insert(xS, backpace, x0, axis=0)
@@ -645,7 +694,7 @@ class Conj_Grad(FiniteDiff):
                 xS2 = np.array(map(lambda x: x0 + x*d, xL2))
 
                 # Evaluate function
-                yS2 = f(xS2.T, *f_args)
+                yS2 = np.array(M(f_eval, xS2.T))
                 yS2 /= norm
 
                 # Concatenate Arrays
@@ -659,7 +708,7 @@ class Conj_Grad(FiniteDiff):
                 xS2 = np.array(map(lambda x: x + x*d, xL2))
 
                 # Evaluate function
-                yS2 = f(xS2.T, *f_args)
+                yS2 = np.array(M(f_eval, xS2.T))
                 yS2 /= norm
                 
                 # Concatenate Arrays
